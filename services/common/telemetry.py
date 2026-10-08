@@ -24,9 +24,10 @@ from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.logging.handler import LoggingHandler
 from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
-from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
@@ -116,9 +117,10 @@ def setup_telemetry(service_name: str, service_version: str) -> None:
         MeterProvider(resource=resource, metric_readers=[reader], views=DURATION_VIEWS)
     )
 
-    # Logs (the Python logs SDK is still marked experimental: note the underscore modules).
-    # A LoggingHandler turns stdlib `logging` records into OTel log records. Records emitted
-    # inside a span carry its trace_id and span_id: that is what makes log/trace correlation work.
+    # Logs. The Python logs SDK is still experimental (note the underscore modules). The
+    # LoggingHandler from opentelemetry-instrumentation-logging turns stdlib `logging` records
+    # into OTel log records; a record emitted inside a span carries its trace_id and span_id.
+    # That is what makes log/trace correlation work.
     logger_provider = LoggerProvider(resource=resource)
     logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
     set_logger_provider(logger_provider)

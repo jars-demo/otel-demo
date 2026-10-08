@@ -25,11 +25,13 @@ dependencies = [
     "opentelemetry-instrumentation-httpx==0.66b1",
     "opentelemetry-instrumentation-redis==0.66b1",
     "opentelemetry-instrumentation-psycopg==0.66b1",
+    "opentelemetry-instrumentation-logging==0.66b1",
 ]
 
 [dependency-groups]
 dev = [
     "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
     "ruff==0.16.10",
     "fakeredis[lua]==2.39.0",
 ]
@@ -38,9 +40,12 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["services"]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra -m 'not integration'"
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning:fastapi.testclient", "ignore:Using `httpx`"]
 markers = ["integration: needs the running Docker stack (docker compose up)"]
 
 [tool.ruff]

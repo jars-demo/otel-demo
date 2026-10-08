@@ -133,13 +133,22 @@ def to_tree(otlp: dict) -> dict:
         out["duration_ms"] = round((span["end_ns"] - span["start_ns"]) / 1e6, 3)
         out["self_ms"] = round(span["self_ns"] / 1e6, 3)
         out["events"] = [
-            {**e, "offset_ms": round((e.pop("time_ns") - trace_start) / 1e6, 3)}
+            {
+                "name": e["name"],
+                "attributes": e["attributes"],
+                "offset_ms": round((e["time_ns"] - trace_start) / 1e6, 3),
+            }
             for e in span["events"]
         ]
         return out
 
+    # A span whose parent is not in the trace means the parent's batch has not arrived yet
+    # (each service exports on its own schedule). Tell the UI instead of guessing.
+    orphans = sum(1 for span in spans if span["parent_id"] and span["parent_id"] not in by_id)
+
     return {
         "trace_id": otlp.get("traceID") or _trace_id(trace),
+        "incomplete": orphans > 0,
         "root_name": root["name"],
         "root_service": root["service"],
         "start_unix_ms": trace_start // 1_000_000,

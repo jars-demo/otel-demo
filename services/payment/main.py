@@ -95,7 +95,7 @@ def create_app(db: Database | None = None):
                     raise PaymentProviderTimeout(
                         f"payment provider timeout after {PROVIDER_TIMEOUT_MS} ms"
                     )
-                await asyncio.sleep(random.uniform(0.015, 0.035))  # provider round trip
+                await asyncio.sleep(random.uniform(0.12, 0.18))  # card network round trip
                 status = decide(body.amount_cents)
 
             span.set_attribute("app.payment.outcome", status)

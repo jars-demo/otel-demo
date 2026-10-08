@@ -98,13 +98,15 @@ def create_app(redis: Redis | None = None):
                 raise StockLedgerUnavailable("reservation failed: stock ledger unavailable")
             try:
                 await state["store"].reserve(body.order_id, lines)
+                outcome = "reserved"
             except InsufficientStock as exc:
-                # A business outcome, not a system failure: the span stays OK.
-                span.set_attribute("app.reservation.outcome", "insufficient_stock")
-                reservations.add(1, {"app.reservation.outcome": "insufficient_stock"})
-                raise HTTPException(409, str(exc)) from None
-            span.set_attribute("app.reservation.outcome", "reserved")
-            reservations.add(1, {"app.reservation.outcome": "reserved"})
+                outcome, shortage = "insufficient_stock", str(exc)
+            span.set_attribute("app.reservation.outcome", outcome)
+            reservations.add(1, {"app.reservation.outcome": outcome})
+        if outcome == "insufficient_stock":
+            # Raised after the span has ended: running out of stock is a business outcome,
+            # so the span keeps status OK. An exception escaping the span would mark it ERROR.
+            raise HTTPException(409, shortage)
         return {"order_id": body.order_id, "status": "reserved"}
 
     @app.post("/reservations/{order_id}/release")
