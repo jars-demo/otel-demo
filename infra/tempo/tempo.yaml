@@ -1,0 +1,51 @@
+# Tempo 3.1, single binary (-target=all), local storage. Traces arrive from the Collector over
+# OTLP/gRPC. Based on the single-binary example shipped with Tempo 3.1.
+
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+# Derives metrics from the spans it receives and remote-writes them to Prometheus:
+#   service-graphs  request/failure counts and latency per caller -> callee edge (the service map)
+#   span-metrics    request rate, errors and duration per span (RED metrics from traces)
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+# Keep traces for three days: plenty for a workshop, cheap on disk. In Tempo 3 the backend
+# worker (part of the single binary) compacts blocks and enforces retention.
+backend_worker:
+  compaction:
+    block_retention: 72h
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]
+      generate_native_histograms: classic
+
+usage_report:
+  reporting_enabled: false

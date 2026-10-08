@@ -1,0 +1,68 @@
+# Grafana data sources, wired together so you can jump between signals:
+#   trace -> logs     Tempo "Logs for this span" opens Loki filtered by the trace id
+#   log   -> trace    a Loki log line's trace_id links to the trace in Tempo
+#   metric -> trace   exemplars on latency panels link to an example trace
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      streamingEnabled:
+        search: true
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+        filterBySpanID: false
+        customQuery: true
+        query: '{service_name="$${__span.tags["service.name"]}"} | trace_id="$${__trace.traceId}"'
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: -10m
+        spanEndTimeShift: 10m
+        tags:
+          - key: service.name
+            value: service_name
+        queries:
+          - name: Request rate
+            query: sum(rate(http_server_request_duration_seconds_count{$$__tags}[1m]))
+          - name: p95 latency
+            query: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{$$__tags}[1m])))
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        - name: trace_id
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+          urlDisplayLabel: Open trace

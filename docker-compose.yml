@@ -1,0 +1,302 @@
+# OpenTelemetry Incident Lab: the whole lab, one command.
+#
+#   docker compose up -d --build --wait
+#
+# Application   web, api-gateway, order-service, inventory-service, payment-service
+# Data          postgres, redis, toxiproxy (network fault injection in front of both)
+# Telemetry     otel-collector -> tempo (traces), prometheus (metrics), loki (logs) -> grafana
+# Lab tooling   lab-console (faults, incidents, load, telemetry queries; not instrumented)
+#
+# Host ports bind to 127.0.0.1 only: the lab is for your machine, not your network.
+
+name: otel-demo
+
+x-service: &service
+  # One image for every Python service; the command picks which service runs.
+  image: otel-demo-service:local
+  build:
+    context: .
+    dockerfile: services/Dockerfile
+  restart: unless-stopped
+  environment: &service-env
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    OTEL_METRIC_EXPORT_INTERVAL: "5000"
+    OTEL_SEMCONV_STABILITY_OPT_IN: http,database
+    DEPLOYMENT_ENVIRONMENT: demo
+    LOG_LEVEL: INFO
+  depends_on: &service-deps
+    otel-collector:
+      condition: service_started
+  deploy:
+    resources:
+      limits:
+        memory: 192m
+
+services:
+  # --- Application ------------------------------------------------------------------------
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: otel-demo-web:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3400:8080"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+      lab-console:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+  api-gateway:
+    <<: *service
+    command: ["python", "-m", "gateway"]
+    environment:
+      <<: *service-env
+      ORDERS_URL: http://order-service:8000
+      INVENTORY_URL: http://inventory-service:8000
+      CORS_ORIGINS: http://localhost:3400,http://127.0.0.1:3400
+    ports:
+      - "127.0.0.1:8400:8000"
+    depends_on:
+      <<: *service-deps
+      order-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+
+  order-service:
+    <<: *service
+    command: ["python", "-m", "orders"]
+    environment:
+      <<: *service-env
+      DATABASE_URL: postgresql://shop:shop@toxiproxy:5433/shop
+      INVENTORY_URL: http://inventory-service:8000
+      PAYMENT_URL: http://payment-service:8000
+    depends_on:
+      <<: *service-deps
+      toxiproxy:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+
+  inventory-service:
+    <<: *service
+    command: ["python", "-m", "inventory"]
+    environment:
+      <<: *service-env
+      REDIS_URL: redis://toxiproxy:6380/0
+    depends_on:
+      <<: *service-deps
+      toxiproxy:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  payment-service:
+    <<: *service
+    command: ["python", "-m", "payment"]
+    environment:
+      <<: *service-env
+      DATABASE_URL: postgresql://shop:shop@toxiproxy:5433/shop
+    depends_on:
+      <<: *service-deps
+      toxiproxy:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+  # --- Lab tooling ------------------------------------------------------------------------
+
+  lab-console:
+    <<: *service
+    command: ["python", "-m", "lab"]
+    environment:
+      OTEL_SDK_DISABLED: "true"
+      LOG_LEVEL: INFO
+      GATEWAY_URL: http://api-gateway:8000
+      ORDERS_URL: http://order-service:8000
+      INVENTORY_URL: http://inventory-service:8000
+      PAYMENT_URL: http://payment-service:8000
+      TOXIPROXY_URL: http://toxiproxy:8474
+      TEMPO_URL: http://tempo:3200
+      PROMETHEUS_URL: http://prometheus:9090
+      LOKI_URL: http://loki:3100
+      COLLECTOR_HEALTH_URL: http://otel-collector:13133/
+      INCIDENTS_DIR: /incidents
+      CORS_ORIGINS: http://localhost:3400,http://127.0.0.1:3400
+    ports:
+      - "127.0.0.1:8410:8000"
+    depends_on:
+      toxiproxy:
+        condition: service_started
+
+  # --- Data -------------------------------------------------------------------------------
+
+  postgres:
+    image: postgres:18.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop # a local lab credential, not a secret
+      POSTGRES_DB: shop
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  redis:
+    image: redis:8.8.3-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 96m
+
+  # A TCP proxy between the services and their data stores. The lab-console adds "toxics"
+  # (latency) through its API at :8474 to simulate a slow Redis or a slow database.
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    restart: unless-stopped
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    volumes:
+      - ./infra/toxiproxy/toxiproxy.json:/config/toxiproxy.json:ro
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+  # --- Telemetry pipeline and backends ----------------------------------------------------
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.162.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./infra/otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "127.0.0.1:4317:4317" # OTLP gRPC, for services you run on your machine
+      - "127.0.0.1:4318:4318" # OTLP HTTP
+    depends_on:
+      - tempo
+      - prometheus
+      - loki
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  tempo:
+    image: grafana/tempo:3.1.0
+    restart: unless-stopped
+    command: ["-target=all", "-config.file=/etc/tempo.yaml"]
+    user: "0" # the image's default user cannot write to a fresh named volume
+    volumes:
+      - ./infra/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "127.0.0.1:3200:3200"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.retention.time=3d
+      - --web.enable-otlp-receiver
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./infra/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  loki:
+    image: grafana/loki:3.7.8
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    user: "0"
+    volumes:
+      - ./infra/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+
+  grafana:
+    image: grafana/grafana:13.2.3
+    restart: unless-stopped
+    environment:
+      # Anonymous viewer access, no login form: convenient for a local lab, never for production.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3401:3000"
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+volumes:
+  postgres-data:
+  tempo-data:
+  prometheus-data:
+  loki-data:
+  grafana-data:

@@ -1,0 +1,54 @@
+# Loki 3.7, single binary, filesystem storage. Logs arrive from the Collector over OTLP at
+# /otlp/v1/logs. Loki turns a few resource attributes (service.name among them) into index
+# labels, `service_name` for example, and keeps trace_id, span_id and severity as structured
+# metadata, which LogQL can filter on: {service_name="payment-service"} | trace_id="..."
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Required for OTLP ingestion: attributes that are not labels become structured metadata.
+  allow_structured_metadata: true
+  # A lab keeps a few days of logs. Production retention is a cost and compliance decision.
+  retention_period: 72h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 50
+
+analytics:
+  reporting_enabled: false
