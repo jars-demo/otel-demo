@@ -30,6 +30,7 @@ from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -54,6 +55,27 @@ os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http,database")
 # The demo exports metrics every 5 s so charts move while you watch. The SDK default is 60 s,
 # which is a sensible production value: fewer, larger exports.
 METRIC_EXPORT_INTERVAL_MS = int(os.getenv("OTEL_METRIC_EXPORT_INTERVAL", "5000"))
+
+
+# Histogram bucket boundaries (seconds) for request durations. The default boundaries are coarse
+# between 100 ms and 1 s, exactly where this shop's latencies live, so percentiles computed from
+# them would be rough guesses. A View changes the aggregation without touching instrumentation.
+DURATION_BUCKETS_S = [
+    0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5,
+    0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4, 5, 7.5, 10,
+]  # fmt: skip
+
+DURATION_VIEWS = [
+    View(
+        instrument_name=name,
+        aggregation=ExplicitBucketHistogramAggregation(DURATION_BUCKETS_S),
+    )
+    for name in (
+        "http.server.request.duration",
+        "http.client.request.duration",
+        "db.client.operation.duration",
+    )
+]
 
 
 def build_resource(service_name: str, service_version: str) -> Resource:
@@ -90,7 +112,9 @@ def setup_telemetry(service_name: str, service_version: str) -> None:
     reader = PeriodicExportingMetricReader(
         OTLPMetricExporter(), export_interval_millis=METRIC_EXPORT_INTERVAL_MS
     )
-    metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[reader]))
+    metrics.set_meter_provider(
+        MeterProvider(resource=resource, metric_readers=[reader], views=DURATION_VIEWS)
+    )
 
     # Logs (the Python logs SDK is still marked experimental: note the underscore modules).
     # A LoggingHandler turns stdlib `logging` records into OTel log records. Records emitted

@@ -13,6 +13,7 @@ So the pool reports the semantic-convention connection metrics (status: developm
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from collections.abc import AsyncIterator
@@ -39,17 +40,10 @@ class Database:
         self, name: str, dsn: str | None = None, *, min_size: int = 1, max_size: int = 10
     ) -> None:
         self.name = name
-        self.default_max = max_size
-        self.pool = AsyncConnectionPool(
-            dsn or os.getenv("DATABASE_URL", "postgresql://shop:shop@localhost:5432/shop"),
-            min_size=min_size,
-            max_size=max_size,
-            timeout=float(os.getenv("DB_POOL_TIMEOUT_S", "2")),
-            # Autocommit: one statement is one transaction; multi-statement work uses
-            # `async with conn.transaction()` explicitly.
-            kwargs={"autocommit": True},
-            open=False,
-        )
+        self.dsn = dsn or os.getenv("DATABASE_URL", "postgresql://shop:shop@localhost:5432/shop")
+        self.min_size = min_size
+        self.pool = self._new_pool(max_size)
+        self._retired: set[asyncio.Task] = set()
         self._attrs = {POOL_NAME_ATTR: name}
         meter = metrics.get_meter("common.db")
         self._wait_time = meter.create_histogram(
@@ -89,8 +83,29 @@ class Database:
     async def close(self) -> None:
         await self.pool.close()
 
+    def _new_pool(self, max_size: int) -> AsyncConnectionPool:
+        return AsyncConnectionPool(
+            self.dsn,
+            min_size=min(self.min_size, max_size),
+            max_size=max_size,
+            timeout=float(os.getenv("DB_POOL_TIMEOUT_S", "2")),
+            # Autocommit: one statement is one transaction; multi-statement work uses
+            # `async with conn.transaction()` explicitly.
+            kwargs={"autocommit": True},
+            open=False,
+        )
+
     async def resize(self, max_size: int) -> None:
-        await self.pool.resize(min_size=min(1, max_size), max_size=max_size)
+        """Swap in a new pool of the given size. psycopg_pool's own resize() never closes
+        connections that already exist, so a shrink would only take effect much later."""
+        if max_size == self.pool.max_size:
+            return
+        old, self.pool = self.pool, self._new_pool(max_size)
+        await self.pool.open(wait=False)
+        # Connections still borrowed from the old pool are closed as they come back.
+        task = asyncio.create_task(old.close(timeout=10))
+        self._retired.add(task)
+        task.add_done_callback(self._retired.discard)
 
     @asynccontextmanager
     async def connection(self) -> AsyncIterator[AsyncConnection]:

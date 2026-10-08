@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # One image for every Python service (api-gateway, order-service, inventory-service,
 # payment-service, lab-console). Compose picks the service with the command, for example
 # `python -m gateway`. Build from the repository root:
