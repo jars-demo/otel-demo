@@ -1,0 +1,84 @@
+id: INC-999
+slug: final-challenge
+title: Final Incident Challenge
+severity: SEV-2
+summary: Checkout latency is up and some checkouts fail. Every dependency looks healthy.
+challenge: true
+symptom: |
+  Checkout latency has increased. Some checkouts fail with HTTP 502. Payment looks
+  healthy. Inventory looks healthy. Database query times look normal. Nobody deployed
+  anything. Find the root cause.
+trigger:
+  faults:
+    orders.hold_connection_during_checkout: true
+  load:
+    scenario: checkout
+    rps: 12
+    duration_s: 900
+investigation:
+  - id: health
+    title: Check service health
+    task: Which services are degraded? Which are healthy?
+    hint: api-gateway and order-service are degraded. inventory-service, payment-service, redis and postgres are healthy.
+    where: /metrics/
+  - id: metrics
+    title: Inspect metrics
+    task: Payment, inventory and the database are healthy. So where could order-service be spending its time?
+    hint: Not in its dependencies. Something inside order-service is slow, or something it is waiting for has no span.
+    where: /metrics/
+  - id: slow-trace
+    title: Find a slow trace
+    task: Open a checkout trace slower than 1000 ms and read the order-service spans carefully.
+    hint: Look for time inside order-service that no child span accounts for.
+    where: /traces/
+  - id: gap
+    title: Explain the gap
+    task: Where is the gap? What does order-service do at the start of a checkout, before its first child span?
+    hint: The checkout span has a long stretch of self time before order.validate starts, and it is not CPU work. In this version of the code, checkout begins by taking a database connection from the pool.
+    where: /traces/
+  - id: pool
+    title: Check the connection pool
+    task: Look at the connection pool metrics for order-service.
+    hint: db_client_connection_pending_requests is above zero, db_client_connection_wait_time_seconds p95 is high, the pool max is 2, and connections stay "used" for the whole checkout.
+    where: /metrics/
+  - id: logs
+    title: Correlate logs
+    task: What do the failed checkouts say?
+    hint: '"timed out after 2s waiting for a database connection", logged as ERROR by order-service.'
+    where: /logs/
+  - id: root-cause
+    title: Identify the root cause
+    task: Answer the root cause question below.
+question:
+  prompt: What is the root cause?
+  options:
+    - id: a
+      text: Redis latency
+      correct: false
+      feedback: The Redis spans are fast and redis is healthy on the service map.
+    - id: b
+      text: PostgreSQL is slow
+      correct: false
+      feedback: Each SQL span is still a few milliseconds once it starts. The waiting happens before the query, not during it.
+    - id: c
+      text: order-service holds a pooled database connection for the whole checkout, including the inventory and payment calls, so the small pool runs out and requests queue for a connection
+      correct: true
+      feedback: Correct. Connection pool exhaustion, caused by holding a connection across network calls.
+    - id: d
+      text: A downstream service times out
+      correct: false
+      feedback: inventory-service and payment-service answer quickly, and no CLIENT span times out.
+answer:
+  root_cause: Connection pool exhaustion in order-service. The checkout code checks out a database connection at the start and keeps it through the inventory and payment HTTP calls, and the pool allows only 2 connections. At 12 checkouts per second, slightly more than two connections can serve, requests queue for a connection. Some wait longer than the 2-second pool timeout and fail with 503.
+  evidence:
+    - Checkout traces show self time at the start of the order-service checkout span, before its first child span. That is time waiting for a connection, which no instrumentation library records as a span.
+    - The SQL, Redis, inventory and payment spans are all as fast as in the baseline.
+    - db_client_connection_pending_requests is above zero, db_client_connection_wait_time_seconds p95 is high, and db_client_connection_max for order-service is 2.
+    - db_client_connection_timeouts_total rises, matching ERROR logs that say "timed out after 2s waiting for a database connection".
+  expected_telemetry:
+    traces: Long self time at the start of checkout; downstream spans are normal.
+    metrics: Pool wait time, pending requests and timeouts rise; dependency metrics stay flat.
+    logs: Occasional ERROR logs about waiting for a database connection.
+  remediation: Never hold a database connection across a network call. Borrow a connection per database step and return it right away (in the lab, Apply fix restores that behaviour and the pool size of 10). Size the pool from measured concurrency, and alert on pool wait time.
+  verification: p95 returns to within 1.5 times the baseline, the error rate drops under 2%, and pool wait time falls back to near zero.
+  lesson: Healthy dependencies plus a slow service means the time is inside the service, often in work no span covers. A gap in a trace is evidence too. Here the metrics that filled the gap were the database client connection metrics.

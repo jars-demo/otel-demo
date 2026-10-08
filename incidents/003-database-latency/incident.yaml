@@ -1,0 +1,81 @@
+id: INC-003
+slug: database-latency
+title: Database Slowdown
+severity: SEV-2
+summary: Placing an order got slow. Product browsing is still fast.
+symptom: |
+  Creating an order now takes around two seconds. Browsing the catalog is as fast as ever.
+  The database team says "the database is fine, CPU is low".
+trigger:
+  faults:
+    postgres.latency_ms: 300
+  load:
+    scenario: mixed
+    rps: 4
+    duration_s: 900
+investigation:
+  - id: health
+    title: Check service health
+    task: Which services are degraded? Is inventory-service among them?
+    hint: order-service and payment-service are degraded, and postgres is unhealthy. inventory-service and redis are healthy.
+    where: /metrics/
+  - id: metrics
+    title: Inspect metrics
+    task: Compare GET /api/products with POST /api/checkout. Which one changed?
+    hint: Browsing does not touch PostgreSQL and stays fast. Checkout writes to PostgreSQL and is slow.
+    where: /metrics/
+  - id: slow-trace
+    title: Find a slow trace
+    task: Open a checkout trace slower than 1500 ms.
+    hint: Set "Slower than" to 1500 ms.
+    where: /traces/
+  - id: db-spans
+    title: Inspect the database spans
+    task: Look at the INSERT and UPDATE spans. How long does each one take, and how many are there?
+    hint: Every PostgreSQL CLIENT span (db.system.name = postgresql) takes at least 300 ms. order.create alone holds two INSERTs. The time adds up because the round trips happen one after another.
+    where: /traces/
+  - id: query-text
+    title: Read the query
+    task: Do the slow queries look expensive? Check db.query.text.
+    hint: They are simple single-row INSERTs and UPDATEs by primary key. A cheap query that takes 300 ms points at the path to the database, not at the query.
+    where: /traces/
+  - id: logs
+    title: Correlate logs
+    task: Are there errors in the logs?
+    hint: No. Slow, not failing.
+    where: /logs/
+  - id: root-cause
+    title: Identify the root cause
+    task: Answer the root cause question below.
+question:
+  prompt: What makes order creation slow?
+  options:
+    - id: a
+      text: The INSERT statements are missing an index
+      correct: false
+      feedback: These are primary-key inserts on tiny tables. A missing index would not cost 300 ms here, and certainly not the same 300 ms on every statement.
+    - id: b
+      text: Every round trip to PostgreSQL takes about 300 ms longer than it should
+      correct: true
+      feedback: Correct. Every SQL span grew by the same fixed amount, whatever the statement. That is the signature of latency on the path to the database.
+    - id: c
+      text: order-service is CPU bound
+      correct: false
+      feedback: The order spans have little self time. The time is inside the SQL client spans.
+    - id: d
+      text: Redis is slow
+      correct: false
+      feedback: The Redis spans are fast and browsing is unaffected.
+answer:
+  root_cause: Network latency between the services and PostgreSQL. Toxiproxy adds 300 ms to every response from the database, so each SQL round trip costs at least 300 ms.
+  evidence:
+    - order-service and payment-service p95 went up; inventory-service did not.
+    - Every PostgreSQL CLIENT span takes about 300 ms or more, however simple the statement.
+    - The db_client_operation_duration_seconds metric rose for every operation (INSERT, UPDATE) at once.
+  expected_telemetry:
+    traces: postgresql CLIENT spans of 300 ms or more under order.create, order.complete and payment.process.
+    metrics: db_client_operation_duration_seconds p95 jumps for every db_operation_name; the service-graph edge to postgres is slow.
+    logs: No errors.
+  remediation: Remove the database latency (in the lab, Apply fix). In production you would check the network between the application and the database, the connection proxy, replication or failover state, and storage I/O. Fewer round trips (batching statements) also make an application less sensitive to latency.
+  verification: p95 returns to within 1.5 times the baseline.
+  lesson: A fixed delay added to every query, whatever the query, means the path to the database is slow, not the SQL. Database-side CPU can look perfectly normal.

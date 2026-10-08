@@ -1,0 +1,76 @@
+id: INC-004
+slug: inventory-failure
+title: Inventory Service Failure
+severity: SEV-2
+summary: About one checkout in three fails. Retrying usually works.
+symptom: |
+  Customers say checkout "sometimes" fails with an error and works when they try again. The
+  failure rate looks steady, not random spikes.
+trigger:
+  faults:
+    inventory.error_every_n: 3
+  load:
+    scenario: checkout
+    rps: 3
+    duration_s: 900
+investigation:
+  - id: health
+    title: Check service health
+    task: Which services show an error rate on the service map?
+    hint: inventory-service, order-service and api-gateway all show errors, at roughly a third of their checkout traffic.
+    where: /metrics/
+  - id: metrics
+    title: Inspect the error rate
+    task: Is the error rate steady or bursty? What share of checkouts fail?
+    hint: Steady at about 33%. inventory_reservations_total with outcome "error" rises at a third of the reservation rate.
+    where: /metrics/
+  - id: error-trace
+    title: Find a failing trace
+    task: Open an error trace. Which is the deepest span with status ERROR?
+    hint: inventory.reserve in inventory-service has an exception event, StockLedgerUnavailable.
+    where: /traces/
+  - id: compare
+    title: Compare with a good trace
+    task: Open a successful checkout from the same minute. What differs?
+    hint: The good trace continues to order.charge_payment. The failed one stops at order.reserve_inventory, so payment is never called.
+    where: /traces/
+  - id: logs
+    title: Correlate logs
+    task: Filter the logs to ERROR for inventory-service. Then click a trace id.
+    hint: '"reservation failed: stock ledger unavailable", and each one links to a failed trace.'
+    where: /logs/
+  - id: root-cause
+    title: Identify the root cause
+    task: Answer the root cause question below.
+question:
+  prompt: Why do some checkouts fail?
+  options:
+    - id: a
+      text: Some products are out of stock
+      correct: false
+      feedback: Out of stock answers 409 and is not an error status. These are 500s from a failed reservation.
+    - id: b
+      text: inventory-service fails a share of stock reservations with an internal error
+      correct: true
+      feedback: Correct. inventory.reserve records StockLedgerUnavailable on one reservation in three.
+    - id: c
+      text: The payment provider is flaky
+      correct: false
+      feedback: Failed traces never reach payment-service.
+    - id: d
+      text: The gateway is overloaded
+      correct: false
+      feedback: The gateway passes the error on; it does not cause it.
+answer:
+  root_cause: inventory-service fails every third stock reservation (an injected StockLedgerUnavailable error). order-service marks the order failed and answers 502.
+  evidence:
+    - inventory.reserve spans with exception StockLedgerUnavailable and status ERROR, in about a third of checkouts.
+    - Failed traces stop after order.reserve_inventory; payment-service is never called.
+    - ERROR logs from inventory-service, each with a trace_id that opens a failed trace.
+  expected_telemetry:
+    traces: ERROR status on inventory.reserve and on every span above it.
+    metrics: inventory_reservations_total with outcome "error" at about a third of reservations; a matching 5xx rate on inventory-service and api-gateway.
+    logs: An ERROR from inventory-service, "reservation failed - stock ledger unavailable", with trace_id.
+  remediation: Stop the reservation errors (in the lab, Apply fix). In production you would find out why the stock store is failing, and decide whether a reservation failure should be retried (the operation is idempotent here) or fail fast.
+  verification: The error rate drops under 2%.
+  lesson: An intermittent failure is easiest to understand by putting a failed trace next to a successful one and finding the first point where they diverge.

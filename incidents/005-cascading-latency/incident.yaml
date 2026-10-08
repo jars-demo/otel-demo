@@ -1,0 +1,83 @@
+id: INC-005
+slug: cascading-latency
+title: Cascading Latency
+severity: SEV-2
+summary: Three services report high latency at the same time. Only one of them is the cause.
+symptom: |
+  Alerts fire for api-gateway, order-service and inventory-service, all for high latency, all
+  at once. Three teams are paged, and each one says "it is not us, we are just waiting on
+  someone else". Redis and PostgreSQL look healthy.
+trigger:
+  faults:
+    inventory.latency_ms: 2000
+  load:
+    scenario: mixed
+    rps: 4
+    duration_s: 900
+investigation:
+  - id: health
+    title: Check service health
+    task: How many services are degraded? Are the data stores healthy?
+    hint: Three services are unhealthy; redis and postgres are healthy. When several services degrade together, start from the bottom of the dependency chain.
+    where: /metrics/
+  - id: metrics
+    title: Inspect metrics
+    task: Which operation slowed down? Is browsing affected?
+    hint: Only checkout is slow. GET /api/products also calls inventory-service but stays fast, so the problem is limited to one inventory operation.
+    where: /metrics/
+  - id: slow-trace
+    title: Find a slow trace
+    task: Open a checkout trace slower than 2000 ms.
+    hint: Set "Slower than" to 2000 ms and operation to checkout.
+    where: /traces/
+  - id: self-time
+    title: Separate self time from child time
+    task: Walk down the critical path. Where does the self time sit?
+    hint: The gateway, order-service and the inventory SERVER span all have long durations but tiny self time, because they are only waiting. inventory.reserve has about 2000 ms of self time, and its Redis child (EVALSHA) is fast.
+    where: /traces/
+  - id: compare-001
+    title: Compare with INC-001
+    task: In INC-001 the time was inside a Redis span. Where is it now?
+    hint: Inside inventory-service's own code. Its Redis span is a few milliseconds.
+    where: /traces/
+  - id: logs
+    title: Correlate logs
+    task: Are there errors?
+    hint: None. Latency cascades without a single error. Timeouts would turn it into errors (see the lesson).
+    where: /logs/
+  - id: root-cause
+    title: Identify the root cause
+    task: Answer the root cause question below.
+question:
+  prompt: Which component is responsible for the latency?
+  options:
+    - id: a
+      text: api-gateway, because it has the highest latency
+      correct: false
+      feedback: The gateway's latency is the sum of everything below it. Its self time is tiny.
+    - id: b
+      text: order-service, because it is in the middle of every checkout
+      correct: false
+      feedback: order-service is waiting on inventory-service; its own spans have almost no self time.
+    - id: c
+      text: Redis
+      correct: false
+      feedback: The EVALSHA span is fast, and the service graph shows a healthy redis.
+    - id: d
+      text: inventory-service's reservation code itself
+      correct: true
+      feedback: Correct. inventory.reserve has about 2 s of self time while its children are fast. Everything above it is waiting.
+answer:
+  root_cause: inventory-service spends about 2 seconds in its own reservation code (an injected slow code path). Every caller above it waits, so the latency cascades up to the user.
+  evidence:
+    - inventory.reserve has about 2000 ms of self time; its Redis child span is a few milliseconds.
+    - The SERVER spans of order-service and api-gateway are long, but their self time is near zero.
+    - GET /api/products, which uses inventory-service but not the reservation code, stays fast.
+    - redis and postgres are healthy on the service map.
+  expected_telemetry:
+    traces: A long inventory.reserve span with high self time and fast children.
+    metrics: p95 rises together on inventory-service, order-service and api-gateway, for checkout only.
+    logs: No errors.
+  remediation: "Remove the slow code path (in the lab, Apply fix). In production, profile the slow code, and protect the callers: set timeouts that match an SLO, use bounded retries with backoff, and shed load before queues grow."
+  verification: p95 returns to within 1.5 times the baseline.
+  lesson: Latency cascades upward, so the loudest alert is often the furthest from the cause. Look for self time, not duration. If callers had short timeouts and retried, this slowdown would also have turned into errors and extra load on inventory-service. That is how a slow dependency becomes an outage.

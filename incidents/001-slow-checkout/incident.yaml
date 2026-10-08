@@ -1,0 +1,85 @@
+id: INC-001
+slug: slow-checkout
+title: Slow Checkout
+severity: SEV-2
+summary: Checkout has become very slow. Nothing is failing, everything just takes seconds.
+symptom: |
+  Support is getting complaints: clicking "Place order" spins for three to four seconds before
+  the confirmation appears. Orders do complete. Nobody has deployed anything today.
+trigger:
+  faults:
+    redis.latency_ms: 1500
+  load:
+    scenario: checkout
+    rps: 3
+    duration_s: 900
+slo:
+  sli: Share of checkout requests that complete in under 500 ms
+  objective: 99% of checkouts under 500 ms
+investigation:
+  - id: health
+    title: Check service health
+    task: Open the service map. Which services are degraded, and which are healthy?
+    hint: api-gateway, order-service and inventory-service turn amber or red. payment-service and postgres stay green. Redis looks unhealthy too.
+    where: /metrics/
+  - id: metrics
+    title: Inspect metrics
+    task: Compare p95 latency per service against the baseline the lab recorded.
+    hint: All three services in the checkout path jumped by roughly the same amount, around 3 seconds. Latency that adds up the same way at every layer usually comes from one place below them.
+    where: /metrics/
+  - id: slow-trace
+    title: Find a slow trace
+    task: In the Trace Explorer, filter checkout traces slower than 2000 ms and open one.
+    hint: Set "Slower than" to 2000 ms and operation to checkout.
+    where: /traces/
+  - id: child-spans
+    title: Inspect child spans
+    task: Follow the critical path down the span tree. Which spans account for the time?
+    hint: Two inventory-service calls are slow. order.validate (the price lookup) and order.reserve_inventory each take about 1.5 seconds.
+    where: /traces/
+  - id: suspicious-service
+    title: Identify the suspicious service
+    task: Inside inventory-service, is the time spent in its own code or waiting on something?
+    hint: The inventory spans have almost no self time. Their child Redis CLIENT spans (HGETALL GET, EVALSHA) take about 1500 ms each.
+    where: /traces/
+  - id: logs
+    title: Correlate logs
+    task: Open the logs for this trace. Do any errors explain it?
+    hint: There are no errors, only normal "order created" and "checkout completed" lines with the same trace_id. Slow is not broken, so traces matter more here than logs.
+    where: /logs/
+  - id: root-cause
+    title: Identify the root cause
+    task: Answer the root cause question below.
+question:
+  prompt: What is the root cause of the slow checkouts?
+  options:
+    - id: a
+      text: payment-service is slow to authorize payments
+      correct: false
+      feedback: The payment spans take about 200 ms, the same as in the baseline.
+    - id: b
+      text: Every Redis command from inventory-service takes about 1.5 s to answer
+      correct: true
+      feedback: Correct. Every Redis CLIENT span is about 1500 ms, and checkout makes two Redis round trips.
+    - id: c
+      text: inventory-service is busy running slow code
+      correct: false
+      feedback: The inventory spans have almost no self time. The time is inside their Redis child spans.
+    - id: d
+      text: PostgreSQL queries are slow
+      correct: false
+      feedback: INSERT and UPDATE spans are a few milliseconds, as usual.
+answer:
+  root_cause: Network latency between inventory-service and Redis. Toxiproxy adds 1500 ms to every Redis response.
+  evidence:
+    - Checkout p95 jumped from about 240 ms to about 3.4 s, with no rise in errors.
+    - In a slow trace, the HGETALL GET (price lookup) and EVALSHA (stock reservation) Redis CLIENT spans each take about 1500 ms.
+    - The inventory-service spans around them have almost no self time.
+    - payment and PostgreSQL spans look the same as in the baseline.
+  expected_telemetry:
+    traces: Redis CLIENT spans (db.system.name = redis) of about 1500 ms under order.validate and order.reserve_inventory.
+    metrics: Higher p95 for api-gateway, order-service and inventory-service; error rate unchanged. The service-graph edge from inventory-service to redis has a p95 of about 1.5 s.
+    logs: "Nothing unusual. That fits: the system is slow, not failing."
+  remediation: Remove the Redis latency (in the lab, Apply fix). In production you would look at the network path, Redis CPU and slow log, connection limits, or a noisy neighbour.
+  verification: p95 returns to within 1.5 times the baseline and the error rate stays under 2%.
+  lesson: When every layer gets slower by the same amount, the cause sits below all of them. Follow the critical path to the deepest span that holds the time.

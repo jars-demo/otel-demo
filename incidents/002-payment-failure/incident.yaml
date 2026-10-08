@@ -1,0 +1,82 @@
+id: INC-002
+slug: payment-failure
+title: Payment Failure
+severity: SEV-1
+summary: Every checkout fails with HTTP 502. Browsing products still works.
+symptom: |
+  The storefront shows "Something went wrong" on every checkout attempt, and the API returns
+  HTTP 502 Bad Gateway. Product pages load fine. Revenue has dropped to zero.
+trigger:
+  faults:
+    payment.fail_payments: true
+  load:
+    scenario: mixed
+    rps: 4
+    duration_s: 900
+investigation:
+  - id: health
+    title: Check service health
+    task: Which services show errors on the service map?
+    hint: api-gateway and order-service show high error rates, and so does payment-service. inventory-service is healthy.
+    where: /metrics/
+  - id: metrics
+    title: Inspect metrics
+    task: Is the whole API failing, or only one operation?
+    hint: The gateway error rate is high but not 100%, because product browsing still succeeds. Only checkouts fail.
+    where: /metrics/
+  - id: error-trace
+    title: Find a failing trace
+    task: In the Trace Explorer, turn on "Errors only" and open a checkout trace.
+    hint: The root span answered 502. Look for the red spans.
+    where: /traces/
+  - id: status
+    title: Follow the error status
+    task: Which is the deepest span with status ERROR? What does its exception event say?
+    hint: payment.provider.authorize in payment-service has an exception event, PaymentProviderTimeout, with the message "payment provider timeout after 800 ms".
+    where: /traces/
+  - id: logs
+    title: Correlate logs
+    task: Open the logs for the trace. What did each service report?
+    hint: payment-service logged the timeout at ERROR, order-service logged that payment-service returned 503, and the gateway logged the 502. One trace_id ties all three together.
+    where: /logs/
+  - id: compensation
+    title: Check the side effects
+    task: Did the failed checkout leave stock reserved?
+    hint: No. After the payment failure, order-service called POST /reservations/{id}/release. You can see that span in the trace.
+    where: /traces/
+  - id: root-cause
+    title: Identify the root cause
+    task: Answer the root cause question below.
+question:
+  prompt: Why does checkout return 502?
+  options:
+    - id: a
+      text: The gateway cannot reach order-service
+      correct: false
+      feedback: order-service answered. The trace continues past it.
+    - id: b
+      text: inventory-service rejects the stock reservation
+      correct: false
+      feedback: The reservation span succeeded with status 201.
+    - id: c
+      text: The payment provider times out, so payment-service answers 503 and the error propagates up
+      correct: true
+      feedback: Correct. The exception event on payment.provider.authorize is the origin, and every span above it carries the error.
+    - id: d
+      text: The orders table is locked
+      correct: false
+      feedback: The SQL spans succeed and are fast.
+answer:
+  root_cause: payment-service cannot get an answer from its payment provider (an injected provider timeout). It returns 503; order-service turns that into a failed order and 502; the gateway passes 502 to the user.
+  evidence:
+    - Checkout traces have status ERROR. The deepest error is payment.provider.authorize with exception PaymentProviderTimeout.
+    - The payment-service SERVER span answered 503, and the order-service CLIENT span to it is ERROR.
+    - ERROR logs from payment-service, order-service and api-gateway share the trace_id.
+    - Product browsing traces are fine, so the outage is limited to the payment path.
+  expected_telemetry:
+    traces: An exception event (exception.type, exception.message, exception.stacktrace) on payment.provider.authorize, and ERROR status on every span up to the root.
+    metrics: The payments_processed_total series with outcome "failed" rises, and so does orders_checkouts_total with outcome "failed". The gateway 5xx rate goes up.
+    logs: An ERROR from payment-service saying "payment provider timeout after 800 ms".
+  remediation: Restore the payment provider (in the lab, Apply fix). In production you would fail over to a secondary provider, open a circuit breaker so you fail fast, and tell users clearly.
+  verification: Checkouts succeed again and the error rate drops under 2%.
+  lesson: Errors propagate upward. The useful span is the deepest one with status ERROR, and its exception event tells you what happened.
