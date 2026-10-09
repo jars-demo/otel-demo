@@ -289,6 +289,12 @@ services:
       - loki-data:/loki
     ports:
       - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready | grep -q 'ready'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
     deploy:
       resources:
         limits:

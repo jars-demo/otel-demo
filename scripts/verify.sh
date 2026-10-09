@@ -17,6 +17,18 @@ for c in api-gateway order-service inventory-service payment-service otel-collec
 done
 curl -fsS -X POST "$LAB/lab/faults/reset" >/dev/null && pass "faults reset"
 
+# Loki's /ready can return 200 before the ingester is accepting writes. Probe the push path
+# directly so we do not race the checkout's logs against ingester startup.
+LOKI="${LOKI_URL:-http://localhost:3100}"
+i=0
+until curl -fsS -o /dev/null -X POST "$LOKI/loki/api/v1/push" \
+    -H 'Content-Type: application/json' \
+    -d '{"streams":[{"stream":{"service_name":"verify"},"values":[["'"$(date +%s%N)"'","probe"]]}]}' \
+    2>/dev/null; do
+  i=$((i + 1)); [ $i -gt 20 ] && fail "Loki ingester did not become writable"; sleep 2
+done
+pass "Loki ingester accepting writes"
+
 echo "Checkout"
 trace=$(curl -fsS -D - -o /dev/null -X POST "$API/api/checkout" -H 'Content-Type: application/json' \
   -d '{"user_id":"verify","items":[{"product_id":"prod-001","quantity":1}]}' \
