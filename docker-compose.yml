@@ -18,6 +18,13 @@ x-service: &service
     context: .
     dockerfile: services/Dockerfile
   restart: unless-stopped
+  # Hardening: tini as PID 1 (signals, zombies), read-only root filesystem, no Linux
+  # capabilities, no privilege escalation. The services write nothing to disk.
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
   environment: &service-env
     OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     OTEL_METRIC_EXPORT_INTERVAL: "5000"
@@ -41,6 +48,10 @@ services:
       dockerfile: frontend/Dockerfile
     image: otel-demo-web:local
     restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     ports:
       - "127.0.0.1:3400:8080"
     depends_on:
@@ -145,6 +156,7 @@ services:
   postgres-db:
     image: postgres:18.6-alpine
     restart: unless-stopped
+    security_opt: [no-new-privileges:true]
     environment:
       POSTGRES_USER: shop
       POSTGRES_PASSWORD: shop # a local lab credential, not a secret
@@ -165,6 +177,7 @@ services:
   redis-db:
     image: redis:8.8.3-alpine
     restart: unless-stopped
+    security_opt: [no-new-privileges:true]
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -183,6 +196,8 @@ services:
   toxiproxy:
     image: ghcr.io/shopify/toxiproxy:2.12.0
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
     volumes:
       - ./infra/toxiproxy/toxiproxy.json:/config/toxiproxy.json:ro
@@ -204,6 +219,8 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.162.0
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
       - ./infra/otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
@@ -222,6 +239,8 @@ services:
   tempo:
     image: grafana/tempo:3.1.0
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     command: ["-target=all", "-config.file=/etc/tempo.yaml"]
     user: "0" # the image's default user cannot write to a fresh named volume
     volumes:
@@ -237,6 +256,8 @@ services:
   prometheus:
     image: prom/prometheus:v3.15.0
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     command:
       - --config.file=/etc/prometheus/prometheus.yaml
       - --storage.tsdb.retention.time=3d
@@ -261,6 +282,8 @@ services:
   loki:
     image: grafana/loki:3.7.8
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     command: ["-config.file=/etc/loki/loki.yaml"]
     user: "0"
     volumes:
@@ -276,6 +299,8 @@ services:
   grafana:
     image: grafana/grafana:13.2.3
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     environment:
       # Anonymous viewer access, no login form: convenient for a local lab, never for production.
       GF_AUTH_ANONYMOUS_ENABLED: "true"

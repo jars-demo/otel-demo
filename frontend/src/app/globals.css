@@ -1,0 +1,369 @@
+@import 'tailwindcss';
+
+/* Dark mode follows [data-theme] on <html>, set before paint by the script in layout.tsx. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+:root {
+  /* White-first. Primary #2563EB, Ink #0F172A. Colour means state: green ok, amber warning,
+     red error. Status text uses a darker step than status marks so it reads at 4.5:1. */
+  --bg: #ffffff;
+  --paper: #ffffff;
+  --paper-2: #f8fafc;
+  --line: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --faint: #94a3b8;
+  --accent: #2563eb;
+  --accent-soft: #eff6ff;
+  --brand: #2563eb;
+  --brand-hover: #1d4ed8;
+  --info: #0369a1;
+  --info-soft: #f0f9ff;
+  --warn: #b45309;
+  --warn-mark: #d97706;
+  --warn-soft: #fffbeb;
+  --danger: #dc2626;
+  --danger-mark: #dc2626;
+  --danger-soft: #fef2f2;
+  --ok: #15803d;
+  --ok-mark: #16a34a;
+  --ok-soft: #f0fdf4;
+  /* Chart series (validated categorical order: blue, orange, aqua, yellow). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --shadow: none;
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg: #09090b;
+  --paper: #0f0f11;
+  --paper-2: #18181b;
+  --line: #27272a;
+  --text: #fafafa;
+  --muted: #a1a1aa;
+  --faint: #71717a;
+  --accent: #60a5fa;
+  --accent-soft: #1d1d21;
+  --brand: #2563eb;
+  --brand-hover: #1d4ed8;
+  --info: #60a5fa;
+  --info-soft: color-mix(in srgb, #60a5fa 7%, #09090b);
+  --warn: #fbbf24;
+  --warn-mark: #f59e0b;
+  --warn-soft: color-mix(in srgb, #fbbf24 7%, #09090b);
+  --danger: #f87171;
+  --danger-mark: #ef4444;
+  --danger-soft: color-mix(in srgb, #f87171 7%, #09090b);
+  --ok: #4ade80;
+  --ok-mark: #22c55e;
+  --ok-soft: color-mix(in srgb, #4ade80 7%, #09090b);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --shadow: none;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-warn: var(--warn);
+  --color-warn-mark: var(--warn-mark);
+  --color-ok-mark: var(--ok-mark);
+  --color-danger-mark: var(--danger-mark);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow-card: var(--shadow);
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 80px;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  font-family: var(--font-sans);
+}
+
+/* Code is shown exactly as typed: no `>=` or `->` ligatures. */
+code,
+pre,
+kbd,
+samp,
+.font-mono {
+  font-variant-ligatures: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+/* --- Code (Shiki dual themes) ----------------------------------------------------------- */
+
+.shiki,
+.shiki span {
+  color: var(--shiki-light);
+  background-color: transparent !important;
+}
+[data-theme='dark'] .shiki,
+[data-theme='dark'] .shiki span {
+  color: var(--shiki-dark);
+}
+.shiki {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.65;
+  tab-size: 4;
+  /* Show code exactly as typed: no `->` turning into an arrow. */
+  font-variant-ligatures: none;
+}
+/* Long single-line output wraps instead of scrolling sideways. */
+.wrap .shiki {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.numbered .shiki code {
+  counter-reset: line;
+}
+.numbered .shiki .line::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 2.25rem;
+  margin-right: 1rem;
+  text-align: right;
+  color: var(--faint);
+  user-select: none;
+}
+
+/* --- Workshop prose --------------------------------------------------------------------- */
+
+.prose-workshop {
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.prose-workshop > * + * {
+  margin-top: 1rem;
+}
+.prose-workshop h2 {
+  margin-top: 2.5rem;
+  font-size: 1.375rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  scroll-margin-top: 88px;
+}
+.prose-workshop h3 {
+  margin-top: 1.75rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+  scroll-margin-top: 88px;
+}
+.prose-workshop p,
+.prose-workshop li {
+  color: var(--text);
+}
+.prose-workshop a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.prose-workshop ul {
+  list-style: disc;
+  padding-left: 1.4rem;
+}
+.prose-workshop ol {
+  list-style: decimal;
+  padding-left: 1.4rem;
+}
+.prose-workshop li + li {
+  margin-top: 0.35rem;
+}
+.prose-workshop li > input[type='checkbox'] {
+  margin-right: 0.5rem;
+  accent-color: var(--accent);
+}
+.prose-workshop ul:has(> li > input[type='checkbox']) {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+.prose-workshop :not(pre) > code {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+  font-size: 0.875em;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.1em 0.35em;
+}
+.prose-workshop strong {
+  font-weight: 650;
+}
+.prose-workshop hr {
+  border-color: var(--line);
+  margin: 2rem 0;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.table-wrap th {
+  text-align: left;
+  font-weight: 650;
+  background: var(--paper-2);
+  color: var(--muted);
+}
+.table-wrap th,
+.table-wrap td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.table-wrap tr:last-child td {
+  border-bottom: 0;
+}
+
+/* `> [!NOTE]` etc. */
+[data-theme='dark'] .callout {
+  border-color: var(--line);
+  border-left-color: var(--c);
+}
+.callout {
+  --c: var(--info);
+  --c-soft: var(--info-soft);
+  border: 1px solid color-mix(in srgb, var(--c) 30%, transparent);
+  border-left: 4px solid var(--c);
+  background: var(--c-soft);
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+.callout > * + * {
+  margin-top: 0.5rem;
+}
+.callout::before {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c);
+}
+.callout[data-kind='note']::before {
+  content: 'Note';
+}
+.callout[data-kind='tip'] {
+  --c: var(--ok);
+  --c-soft: var(--ok-soft);
+}
+.callout[data-kind='tip']::before {
+  content: 'Tip';
+}
+.callout[data-kind='important'] {
+  --c: var(--accent);
+  --c-soft: var(--accent-soft);
+}
+.callout[data-kind='important']::before {
+  content: 'Important';
+}
+.callout[data-kind='warning'] {
+  --c: var(--warn);
+  --c-soft: var(--warn-soft);
+}
+.callout[data-kind='warning']::before {
+  content: 'Warning';
+}
+.callout[data-kind='caution'] {
+  --c: var(--danger);
+  --c-soft: var(--danger-soft);
+}
+.callout[data-kind='caution']::before {
+  content: 'Caution';
+}
+
+/* `> **What it does:** ... **Why:** ... **Expected:** ...` under a command */
+.explain {
+  margin-top: -0.5rem !important;
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  background: var(--paper);
+  padding: 12px 16px;
+  font-size: 14.5px;
+  line-height: 1.7;
+}
+/* The labels share one Markdown paragraph; display them as small headings, one per line. */
+.explain strong {
+  display: block;
+  margin-top: 0.6rem;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.explain > p:first-child > strong:first-child {
+  margin-top: 0;
+}
+.explain > * + * {
+  margin-top: 0.6rem;
+}
+.explain figure {
+  margin-top: 0.5rem;
+}
