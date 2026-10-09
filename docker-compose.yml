@@ -242,7 +242,6 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     command: ["-target=all", "-config.file=/etc/tempo.yaml"]
-    user: "0" # the image's default user cannot write to a fresh named volume
     volumes:
       - ./infra/tempo/tempo.yaml:/etc/tempo.yaml:ro
       - tempo-data:/var/tempo
@@ -285,7 +284,6 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     command: ["-config.file=/etc/loki/loki.yaml"]
-    user: "0"
     volumes:
       - ./infra/loki/loki.yaml:/etc/loki/loki.yaml:ro
       - loki-data:/loki
