@@ -33,6 +33,8 @@ LABEL org.opencontainers.image.title="otel-demo-web" \
       org.opencontainers.image.licenses="MIT"
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /repo/frontend/out /usr/share/nginx/html
+# The base image already runs as nginx (uid 101); stated explicitly so it cannot drift.
+USER 101
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
   CMD ["wget", "-qO-", "http://127.0.0.1:8080/healthz"]
