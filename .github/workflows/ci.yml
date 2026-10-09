@@ -81,6 +81,32 @@ jobs:
         run: docker compose build
       - name: Start the lab
         run: docker compose up -d --wait
+      - name: Wait for Loki to accept writes
+        # Loki 3.6+ has no shell in the image so a Compose healthcheck is impossible (grafana/loki#20149).
+        # Poll /ready from the host until the HTTP server is up, then probe the push path to
+        # confirm the ingester is accepting writes before verify.sh sends real traffic.
+        run: |
+          echo "Waiting for Loki /ready..."
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3100/ready 2>/dev/null | grep -q 'ready'; then
+              echo "  Loki /ready: ok"
+              break
+            fi
+            [ $i -eq 30 ] && echo "Loki /ready timed out" && exit 1
+            sleep 2
+          done
+          echo "Waiting for Loki ingester to accept writes..."
+          for i in $(seq 1 20); do
+            if curl -fsS -o /dev/null -X POST http://localhost:3100/loki/api/v1/push \
+                -H 'Content-Type: application/json' \
+                -d "{\"streams\":[{\"stream\":{\"service_name\":\"ci-probe\"},\"values\":[[\"$(date +%s%N)\",\"probe\"]]}]}" \
+                2>/dev/null; then
+              echo "  Loki ingester: accepting writes"
+              break
+            fi
+            [ $i -eq 20 ] && echo "Loki ingester did not become writable" && exit 1
+            sleep 3
+          done
       - name: End-to-end verification
         run: ./scripts/verify.sh
       - name: Integration tests
