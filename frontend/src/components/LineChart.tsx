@@ -29,7 +29,9 @@ export function LineChart({
   series,
   format,
   unitLabel,
+  emptyText = 'No data in this window yet. Send some traffic.',
 }: {
+  emptyText?: string
   title: string
   series: Record<string, Point[]>
   format: (value: number | null) => string
@@ -56,7 +58,7 @@ export function LineChart({
     return (
       <div className="card p-4">
         <p className="text-sm font-semibold">{title}</p>
-        <p className="mt-6 pb-6 text-center text-sm text-muted">No data in this window yet. Send some traffic.</p>
+        <p className="mt-6 pb-6 text-center text-sm text-muted">{emptyText}</p>
       </div>
     )
   }

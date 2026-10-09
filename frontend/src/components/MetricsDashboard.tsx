@@ -203,6 +203,7 @@ export function MetricsDashboard() {
           <LineChart
             title="Errors"
             unitLabel="HTTP 5xx per second"
+            emptyText="No 5xx responses in this window. That is good news."
             series={series.data?.series.errors ?? {}}
             format={(v) => rate(v)}
           />

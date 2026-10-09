@@ -51,7 +51,7 @@ markers = ["integration: needs the running Docker stack (docker compose up)"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = ["frontend"]
+extend-exclude = ["frontend", "workshop"]  # chapter snippets are deliberately compact excerpts
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
