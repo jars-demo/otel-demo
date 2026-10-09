@@ -1,0 +1,126 @@
+# The lab's Collector configuration with TAIL SAMPLING added to the traces pipeline (chapter 12).
+# Everything else is identical to collector.yaml. Switch to it with:
+#
+#   docker compose -f docker-compose.yml -f infra/otel/sampling.compose.yaml up -d otel-collector
+#
+# and back with `docker compose up -d otel-collector`.
+#
+# OpenTelemetry Collector configuration (otelcol-contrib 0.162.0).
+#
+# Every service sends traces, metrics and logs here over OTLP. The Collector is the only thing
+# that knows where telemetry ends up: swap a backend by editing this file, not the services.
+#
+#   receivers   how telemetry gets in          (OTLP over gRPC :4317 and HTTP :4318)
+#   processors  what happens to it on the way  (protect memory, scrub, batch)
+#   exporters   where it goes                  (Tempo, Prometheus, Loki, and the console)
+#   pipelines   which receivers, processors and exporters each signal uses
+#
+# Check it without starting anything:
+#   docker compose run --rm otel-collector validate --config=/etc/otelcol-contrib/config.yaml
+
+extensions:
+  # GET :13133/ answers 200 while the Collector is running. Docker uses it as a health check.
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # First in every pipeline: refuse data before the Collector runs out of memory.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+  # Defence in depth: drop attributes that must never be stored, even if a service sends them.
+  # The services do not set these; this is the safety net for when someone eventually does.
+  attributes/scrub:
+    actions:
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+      - key: user.email
+        action: delete
+      - key: user.password
+        action: delete
+
+  # Tail sampling: wait until a trace is complete (decision_wait), then keep it if ANY policy
+  # says so. Errors and slow traces are always kept; of the rest, 10%. Must run before batch.
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 20000
+    expected_new_traces_per_sec: 50
+    policies:
+      - name: keep-errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: keep-slow
+        type: latency
+        latency:
+          threshold_ms: 1000
+      - name: sample-the-rest
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  # Last before export: group items into batches. Fewer, larger requests to each backend.
+  batch:
+    send_batch_size: 1024
+    timeout: 2s
+
+exporters:
+  # Traces to Tempo over OTLP/gRPC.
+  otlp_grpc/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Metrics to Prometheus' native OTLP endpoint (Prometheus runs with --web.enable-otlp-receiver).
+  otlp_http/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
+    tls:
+      insecure: true
+
+  # Logs to Loki's native OTLP endpoint.
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+  # A one-line summary per batch in `docker compose logs otel-collector`. Set verbosity to
+  # `detailed` to print every span, metric and log record while you learn.
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/scrub, tail_sampling, batch]
+      exporters: [otlp_grpc/tempo, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/prometheus, debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/scrub, batch]
+      exporters: [otlp_http/loki, debug]
+  telemetry:
+    # The Collector's own metrics (accepted, refused, exported items), scraped by Prometheus.
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888

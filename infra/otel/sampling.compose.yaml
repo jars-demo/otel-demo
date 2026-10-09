@@ -1,0 +1,6 @@
+# Compose override for chapter 12: run the Collector with tail sampling.
+#   docker compose -f docker-compose.yml -f infra/otel/sampling.compose.yaml up -d otel-collector
+services:
+  otel-collector:
+    volumes:
+      - ./infra/otel/collector-sampling.yaml:/etc/otelcol-contrib/config.yaml:ro
